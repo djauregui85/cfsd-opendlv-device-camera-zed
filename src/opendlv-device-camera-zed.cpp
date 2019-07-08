@@ -32,17 +32,19 @@
 int32_t main(int32_t argc, char **argv) {
   int32_t retCode{1};
   auto commandlineArguments = cluon::getCommandlineArguments(argc, argv);
-  if ( (0 == commandlineArguments.count("verbose")) ) {
+  if ( (0 == commandlineArguments.count("mode")) || !(commandlineArguments["mode"] == "depth" || commandlineArguments["mode"] == "side-by-side") ) {
     std::cerr << argv[0] << " interfaces with the given and provides the captured image in two shared memory areas: one in I420 format and one in ARGB format." << std::endl;
     std::cerr << "Usage:   " << argv[0] << " [--verbose]" << std::endl;
+    std::cerr << "         --mode: either 'depth' or 'side-by-side'" << std::endl;
     std::cerr << "         --name.i420: name of the shared memory for the I420 formatted image; when omitted, video0.i420 is chosen" << std::endl;
     std::cerr << "         --name.argb: name of the shared memory for the I420 formatted image; when omitted, video0.argb is chosen" << std::endl;
     std::cerr << "         --verbose:   display captured image" << std::endl;
-    std::cerr << "Example: " << argv[0] << " --verbose" << std::endl;
+    std::cerr << "Example: " << argv[0] << " --mode=[depth,side-by-side] [--verbose]" << std::endl;
   } else {
     std::string const NAME_I420{(commandlineArguments["name.i420"].size() != 0) ? commandlineArguments["name.i420"] : "video0.i420"};
     std::string const NAME_ARGB{(commandlineArguments["name.argb"].size() != 0) ? commandlineArguments["name.argb"] : "video0.argb"};
     bool const VERBOSE{commandlineArguments.count("verbose") != 0};
+    bool IS_DEPTH_MODE{commandlineArguments["mode"] == "depth"};
 
     sl::Camera zed;
     sl::InitParameters param;
@@ -63,7 +65,7 @@ int32_t main(int32_t argc, char **argv) {
       std::cout << " .. fps: " << zed.getCameraFPS() << std::endl;
     }
 
-    uint32_t const WIDTH{static_cast<uint32_t>(zed.getResolution().width)};
+    uint32_t const WIDTH{IS_DEPTH_MODE ? static_cast<uint32_t>(zed.getResolution().width) : 2 * static_cast<uint32_t>(zed.getResolution().width)};
     uint32_t const HEIGHT{static_cast<uint32_t>(zed.getResolution().height)};
 
     sl::Mat zed_image;
@@ -102,34 +104,41 @@ int32_t main(int32_t argc, char **argv) {
         XMapWindow(display, window);
       }
 
-      while (zed.grab() == sl::SUCCESS) {
+      while (!cluon::TerminateHandler::instance().isTerminated.load()) {
+        if (zed.grab() != sl::SUCCESS) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          continue;
+        }
 
-        zed.retrieveImage(zed_image, sl::VIEW_LEFT);
+	// Copy from GPU to CPU, avoid if processing on GPU side.
+	// Data stored in BGRA order.
+	sl::VIEW view{IS_DEPTH_MODE ? sl::VIEW_DEPTH : sl::VIEW_SIDE_BY_SIDE};
+        zed.retrieveImage(zed_image, view, sl::MEM_CPU);
 
         cluon::data::TimeStamp ts{cluon::time::now()};
-
+      
         sharedMemoryI420->lock();
         sharedMemoryI420->setTimeStamp(ts);
-        libyuv::RAWToI420(reinterpret_cast<uint8_t*>(zed_image.getPtr<sl::uchar1>(sl::MEM_CPU)), WIDTH * 3 /* 3*WIDTH for RGB24*/,
+	libyuv::ARGBToI420(reinterpret_cast<uint8_t*>(zed_image.getPtr<sl::uchar1>(sl::MEM_CPU)), WIDTH * 4,
             reinterpret_cast<uint8_t*>(sharedMemoryI420->data()), WIDTH,
             reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT)), WIDTH/2,
             reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT + ((WIDTH * HEIGHT) >> 2))), WIDTH/2,
             WIDTH, HEIGHT);
         sharedMemoryI420->unlock();
-
+	
         sharedMemoryARGB->lock();
         sharedMemoryARGB->setTimeStamp(ts);
         libyuv::I420ToARGB(reinterpret_cast<uint8_t*>(sharedMemoryI420->data()), WIDTH,
             reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT)), WIDTH/2,
             reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT + ((WIDTH * HEIGHT) >> 2))), WIDTH/2,
             reinterpret_cast<uint8_t*>(sharedMemoryARGB->data()), WIDTH * 4, WIDTH, HEIGHT);
-
+	
         if (VERBOSE) {
           XPutImage(display, window, DefaultGC(display, 0), ximage, 0, 0, 0, 0, WIDTH, HEIGHT);
-          std::clog << "Acquired new frame at " << cluon::time::toMicroseconds(ts) << " microseconds." << std::endl;
+         // std::clog << "Acquired new frame at " << cluon::time::toMicroseconds(ts) << " microseconds." << std::endl;
         }
         sharedMemoryARGB->unlock();
-
+	
         sharedMemoryI420->notifyAll();
         sharedMemoryARGB->notifyAll();
       }
@@ -144,4 +153,3 @@ int32_t main(int32_t argc, char **argv) {
   }
   return retCode;
 }
-

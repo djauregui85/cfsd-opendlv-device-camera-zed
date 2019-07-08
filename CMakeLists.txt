@@ -97,8 +97,6 @@ find_package(X11 REQUIRED)
 include_directories(SYSTEM ${X11_INCLUDE_DIR})
 set(LIBRARIES ${LIBRARIES} ${X11_X11_LIB})
 
-message("LIBRARIES: " ${LIBRARIES})
-
 ################################################################################
 # Create executable.
 add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.cpp ${CMAKE_BINARY_DIR}/opendlv-standard-message-set.hpp)
