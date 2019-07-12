@@ -241,11 +241,14 @@ int32_t main(int32_t argc, char **argv) {
         memcpy(shmXyz->data(), zedPointCloud.getPtr<sl::uchar1>(sl::MEM_CPU), 
             shmXyz->size());
 	
+        shmXyz->unlock();
+
+	shmXyz->notifyAll();
+
         if (verbose) {
           XPutImage(display, window, DefaultGC(display, 0), ximage, 0, 0, 0, 0,
               width, height);
         }
-        shmArgb->unlock();
       }
 
       zed.close();
