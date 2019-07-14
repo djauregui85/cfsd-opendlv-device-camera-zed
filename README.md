@@ -3,7 +3,7 @@
 ## Usage
 
 ``
-nvidia-docker run -ti --rm --privileged --init --net=host -e DISPLAY=$DISPLAY -v /tmp:/tmp chalmersrevere/opendlv-device-camera-zed-amd64:v0.0.1 opendlv-device-camera-zed --verbose
+nvidia-docker run -ti --rm --privileged --init --ipc=host --net=host -e DISPLAY=$DISPLAY -v /tmp:/tmp chalmersrevere/opendlv-device-camera-zed-amd64:v0.0.1 opendlv-device-camera-zed --profile=1280x720@60 --verbose
 ``
 
 ## License
