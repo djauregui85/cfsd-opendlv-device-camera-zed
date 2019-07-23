@@ -44,9 +44,9 @@ int32_t main(int32_t argc, char **argv) {
       << "  2208x1242@15" << std::endl
       << "  1920x1080@15, 1920x1080@30" << std::endl
       << "  1280x720@15, 1280x720@30, 1280x720@60" << std::endl
-      << "  672x376@15, 672x376@30, 672x376@60, 672x376@100" << std::endl; 
+      << "  672x376@15, 672x376@30, 672x376@60, 672x376@100" << std::endl;
     std::cerr << "  --name: name of the shared memory for the image; "
-      << "when omitted, video0.i420 , video0.argb, and video0.xyz is chosen" 
+      << "when omitted, video0.i420 , video0.argb, and video0.xyz is chosen"
       << std::endl;
     std::cerr << "  --camera-id: Id of ZED camera to use (default 0 -> "
       << "/dev/video0)" << std::endl;
@@ -55,15 +55,16 @@ int32_t main(int32_t argc, char **argv) {
     std::cerr << "Example: " << argv[0] << " --profile=1280x720@30 "
       << "[--name=video0] [--verbose]" << std::endl;
   } else {
-    std::string const name{(commandlineArguments["name"].size() != 0) 
+    std::string const name{(commandlineArguments["name"].size() != 0)
       ? commandlineArguments["name"] : "video0"};
     std::string const nameI420{name + ".i420"};
     std::string const nameArgb{name + ".argb"};
     std::string const nameXyz{name + ".xyz"};
-    
-    int32_t cameraId{(commandlineArguments["camera-id"].size() != 0) 
+    std::string const nameDepthConf{name + ".dconf"};
+
+    int32_t cameraId{(commandlineArguments["camera-id"].size() != 0)
       ? std::stoi(commandlineArguments["camera-id"]) : 0};
-    int32_t gpuId{(commandlineArguments["gpu-id"].size() != 0) 
+    int32_t gpuId{(commandlineArguments["gpu-id"].size() != 0)
       ? std::stoi(commandlineArguments["gpu-id"]) : 0};
 
     bool const verbose{commandlineArguments.count("verbose") != 0};
@@ -96,7 +97,7 @@ int32_t main(int32_t argc, char **argv) {
         std::cerr << "Unknown profile '" << p << "'." << std::endl;
         return retCode;
       }
-      if (p == "2208x1242@15" || p == "1920x1080@15" || p == "1280x720@15" 
+      if (p == "2208x1242@15" || p == "1920x1080@15" || p == "1280x720@15"
           || p == "672x376@15") {
         fps = 15;
       } else if (p == "1920x1080@30" || p == "1280x720@30"
@@ -140,6 +141,7 @@ int32_t main(int32_t argc, char **argv) {
 
     sl::Mat zedImage;
     sl::Mat zedPointCloud;
+    sl::Mat zedDepthConfidence;
 
     Display* display{nullptr};
     Visual* visual{nullptr};
@@ -157,28 +159,38 @@ int32_t main(int32_t argc, char **argv) {
     std::unique_ptr<cluon::SharedMemory> shmArgb{
       new cluon::SharedMemory{nameArgb, width * height * 4}};
     if (!shmArgb || !shmArgb->valid()) {
-      std::cerr << "Failed to create shared memory '" << nameArgb << "'." 
+      std::cerr << "Failed to create shared memory '" << nameArgb << "'."
         << std::endl;
       return retCode;
     }
-    
+
     std::unique_ptr<cluon::SharedMemory> shmXyz{
       new cluon::SharedMemory{nameXyz, width * height * 16}};
     if (!shmXyz || !shmXyz->valid()) {
-      std::cerr << "Failed to create shared memory '" << nameXyz << "'." 
+      std::cerr << "Failed to create shared memory '" << nameXyz << "'."
+        << std::endl;
+      return retCode;
+    }
+
+    std::unique_ptr<cluon::SharedMemory> shmDepthConf{
+      new cluon::SharedMemory{nameDepthConf, width * height * sizeof(float)}};
+    if (!shmDepthConf || !shmDepthConf->valid()) {
+      std::cerr << "Failed to create shared memory '" << nameDepthConf << "'."
         << std::endl;
       return retCode;
     }
 
     if ((shmI420 && shmI420->valid()) &&
         (shmArgb && shmArgb->valid()) &&
-        (shmXyz && shmXyz->valid()) ) {
+        (shmXyz && shmXyz->valid()) &&
+        (shmDepthConf && shmDepthConf->valid())) {
       std::clog << "Data from ZED camera available in I420 format in shared "
         << "memory '" << shmI420->name() << "' (" << shmI420->size() << "), "
-        << "in ARGB format in shared memory '" << shmArgb->name() << "' (" 
+        << "in ARGB format in shared memory '" << shmArgb->name() << "' ("
         << shmArgb->size() << "), and in XYZ format (four floats per pixel: X, "
-        << "Y, Z, unused) in shared memory '" << shmXyz->name() << " (" 
-        << shmXyz->size() << ")." << std::endl;
+        << "Y, Z, unused) in shared memory '" << shmXyz->name() << " ("
+        << shmXyz->size() << "), with corresponding depth confidence map in '"
+        << shmDepthConf->name() << "' (" << shmDepthConf->size() << ")." << std::endl;
 
       // Accessing the low-level X11 data display.
       if (verbose) {
@@ -202,9 +214,10 @@ int32_t main(int32_t argc, char **argv) {
         // Data stored in BGRA order.
         zed.retrieveImage(zedImage, sl::VIEW_LEFT, sl::MEM_CPU);
         zed.retrieveMeasure(zedPointCloud, sl::MEASURE_XYZ);
+        zed.retrieveMeasure(zedDepthConfidence, sl::MEASURE_CONFIDENCE);
 
         cluon::data::TimeStamp ts{cluon::time::now()};
-      
+
         shmI420->lock();
         shmI420->setTimeStamp(ts);
         libyuv::ARGBToI420(reinterpret_cast<uint8_t*>(
@@ -215,7 +228,7 @@ int32_t main(int32_t argc, char **argv) {
               shmI420->data()+(width * height + ((width * height) >> 2))),
             width/2, width, height);
         shmI420->unlock();
-	
+
         shmArgb->lock();
         shmArgb->setTimeStamp(ts);
         libyuv::I420ToARGB(reinterpret_cast<uint8_t*>(shmI420->data()), width,
@@ -224,7 +237,7 @@ int32_t main(int32_t argc, char **argv) {
               shmI420->data()+(width * height + ((width * height) >> 2))),
             width/2, reinterpret_cast<uint8_t*>(shmArgb->data()),
             width * 4, width, height);
-	
+
         if (verbose) {
           XPutImage(display, window, DefaultGC(display, 0), ximage, 0, 0, 0, 0,
               width, height);
@@ -233,17 +246,24 @@ int32_t main(int32_t argc, char **argv) {
 
         shmI420->notifyAll();
         shmArgb->notifyAll();
-        
-        ts = cluon::time::now();
-        
-        shmXyz->lock();
-        shmXyz->setTimeStamp(ts);
-        memcpy(shmXyz->data(), zedPointCloud.getPtr<sl::uchar1>(sl::MEM_CPU), 
-            shmXyz->size());
-	
-        shmXyz->unlock();
 
-	shmXyz->notifyAll();
+        ts = cluon::time::now();
+
+        // Lock both pointcloud and depth confidence to avoid desync
+        shmXyz->lock();
+        shmDepthConf->lock();
+        shmXyz->setTimeStamp(ts);
+        shmDepthConf->setTimeStamp(ts);
+
+        memcpy(shmXyz->data(), zedPointCloud.getPtr<sl::uchar1>(sl::MEM_CPU),
+            shmXyz->size());
+        memcpy(shmDepthConf->data(), zedDepthConfidence.getPtr<sl::uchar1>(sl::MEM_CPU),
+            shmDepthConf->size());
+
+        shmXyz->unlock();
+        shmDepthConf->unlock();
+        shmXyz->notifyAll();
+        shmDepthConf->unlock();
 
         if (verbose) {
           XPutImage(display, window, DefaultGC(display, 0), ximage, 0, 0, 0, 0,
