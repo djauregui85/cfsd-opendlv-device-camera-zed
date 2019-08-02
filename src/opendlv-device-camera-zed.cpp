@@ -263,7 +263,7 @@ int32_t main(int32_t argc, char **argv) {
         shmXyz->unlock();
         shmDepthConf->unlock();
         shmXyz->notifyAll();
-        shmDepthConf->unlock();
+        shmDepthConf->notifyAll();
 
         if (verbose) {
           XPutImage(display, window, DefaultGC(display, 0), ximage, 0, 0, 0, 0,
