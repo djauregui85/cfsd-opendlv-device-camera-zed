@@ -1,5 +1,10 @@
 # OpenDLV microservice to interface with a ZED camera using GPU acceleration
 
+# Build
+Download or clone
+docker build -f Dockerfile.amd64 -t opendlv-device-camera-zed .
+
+
 ## Usage
 
 ``
